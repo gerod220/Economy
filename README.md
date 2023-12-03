@@ -1,12 +1,9 @@
 <h1 align="center">Economy</h1>
 <h3 align="center">Core plugin for creating economic relations between players on cs2 servers</h3>
 
-## Warning
-The plugin is unstable and can cause problems.
-
 ## Install
 1. Install https://github.com/roflmuffin/CounterStrikeSharp
-2. Download `Economy.7z`
+2. Download `Economy.zip`
 3. Move the Economy folder to `addons\counterstrikesharp\plugins\`
 4. Done
 
@@ -17,7 +14,7 @@ On its own, the plugin is nothing of the sort. It does not provide any interface
 - [x] Currency Give, Take, Transfer
 - [ ] Items
   - [x] Creation, Purchase, Use, Transfer
-  - [x] Events:
+  - [ ] Events:
     - [x] Purchasing, Using, Transfer
     - [ ] Created, Destroyed
   - [x] Attributes
@@ -44,39 +41,117 @@ public override async void Load(bool hotReload)
 ```
 As you notice, this is an asynchronous method, which means that the server will not hang if the kernel is not there, and at the same time will not allow an error to be generated because the API functionality will not work.
 
+# Events
+since version 0.2-alpha events have been rewritten to attributes
+
+- Method Signatures:
+
+ProductPurchasing(iUserId, GuidProductId)
+```csharp
+[EconomyEvent(EventId = EconomyEvents.ProductPurchasing]
+public static EventResult OnProductPurchasing(int userId, Guid productId)
+{
+    return EventResult.Continue;
+}
+```
+ProductPurchased(iUserId, GuidProductId)
+```csharp
+[EconomyEvent(EventId = EconomyEvents.ProductPurchased]
+public static void OnProductPurchased(int userId, Guid productId)
+{
+
+}
+```
+ItemUsing(iUserId, GuidItemId)
+```csharp
+[EconomyEvent(EventId = EconomyEvents.ItemUsing]
+public static EventResult OnItemUsing(int userId, Guid itemId)
+{
+    return EventResult.Continue;
+}
+```
+ItemUsed(iUserId, GuidItemId)
+```csharp
+[EconomyEvent(EventId = EconomyEvents.ItemUsed]
+public static void OnItemUsed(int userId, Guid itemId)
+{
+
+}
+```
+MoneyTransfer(dMoney, iFormerUserId, iNewUserId)
+```csharp
+[EconomyEvent(EventId = EconomyEvents.MoneyTransfer]
+public static void OnItemUsed(decimal amount, int formerUserId, int newUserId)
+{
+
+}
+```
+ItemTransfer(GuidItemId, iFormerUserId, iNewUserId)
+```csharp
+[EconomyEvent(EventId = EconomyEvents.ItemTransfer]
+public static void OnItemUsed(Guid itemId, int formerUserId, int newUserId)
+{
+
+}
+```
+
+- Attribute parameters
+In order to have less code in the handler, the basics have been put into parameters, for example product/item Id should be specified in an attribute.
+```csharp
+[EconomyEvent(EventId = EconomyEvents.ProductPurchasing, Id = "83dba2c3-1f3e-4d8e-9bb4-0070358cf68c"]
+public static EventResult OnProductPurchasing(int userId, Guid productId) // productId = Id
+{
+    return EventResult.Continue;
+}
+```
+
+As you have noticed, items support custom attributes, you can specify at which item attributes the handler will work
+```csharp
+[EconomyEvent(EventId = EconomyEvents.ItemUsing, HasAttributes = new string[] { "productId" } ]
+public static EventResult OnItemUsing(int userId, Guid itemId)
+{
+    var item = EconomyAPI.GetItemById(Guid.Parse(itemId))
+    var productId = item.Attributes["productId"]; // The item will always have the attribute, otherwise the handler will not be called.
+    return EventResult.Continue;
+}
+```
+
 What follows is a seemingly complex example of how MedKit can be implemented via API.
 ```csharp
-var medKitProduct = new Product(name: "MedKit", description: "Add health for player", money: 1000);
-EconomyAPI.RegisterProduct(medKitProduct);
-medKitProduct.Purchasing += (userId, product) =>
+private const string MedKitId = "4c8ca223-8b28-41b4-8c7d-66b92b7566c8";
+
+[EconomyEvent(EventId = EconomyEvents.ProductPurchasing, Id = MedKitId)]
+public static EventResult OnMedKitPurchasing(int userId, Guid productId)
 {
-    var myItemMedKit = new Item(product.Name, product.Description, new Dictionary<string, string>() { { "view", $"{ChatColors.Red}MedKit" } });
-    myItemMedKit.Using += (userId, item) =>
+    var product = EconomyAPI.GetProductById(productId);
+    var myItemMedKit = new Item(product!.Name, product.Description, new Dictionary<string, string>()
+    {
+        { "view", $"{ChatColors.Red}MedKit" },
+        { "productId", $"{product.Id}" }
+    });
+
+    if(EconomyAPI.TakeMoney(userId, product.Money))
+    {
+        var id = EconomyAPI.CreateItem(myItemMedKit);
+        EconomyAPI.GiveItem(userId, id);
+    }
+    return EventResult.Handled;
+}
+
+[EconomyEvent(EventId = EconomyEvents.ItemUsing, HasAttributes = new string[] { "productId" })]
+public static EventResult OnItemUsing(int userId, Guid itemId)
+{
+    var item = EconomyAPI.GetItemById(itemId);
+    if (item.Attributes["productId"] == MedKitId.ToString())
     {
         var playerController = Utilities.GetPlayerFromUserid(userId);
         playerController.PlayerPawn.Value.Health += 50;
-
-        if (playerController.PlayerPawn.Value.Health > 100) 
+        if (playerController.PlayerPawn.Value.Health > 100)
             playerController.PlayerPawn.Value.Health = 100;
-
-        return EventResult.Continue;
-    };
-    var id = EconomyAPI.CreateItem(myItemMedKit);
-    EconomyAPI.TakeMoney(userId, product.Money);
-    EconomyAPI.GiveItem(userId, id);
-    return EventResult.Handled;
-};
+    }
+    return EventResult.Continue;
+}
 ```
-So what's going on here?)
-1. We need to create an instance of a class for our product that we will sell to players. Products are mandatory to create, here we only need a purchase event.
-2. We register the product to get its Id. Items are created by Id, each item is unique.
-3. When the player buys something, Purchasing will be triggered, the purchase has started but not completed, so we can change or cancel the event.
-4. Create our instance of the item and subscribe to use it.
-5. Simple code, if the player used the item, we change the health, and give the execution of the event to the core. Next, the kernel will delete the item.
-6. Create our item already in the kernel. After registering the item we will get its Id, it will be needed to give the item to the player.
-7. We are not a charity, so take our money.
-8. We give out the item by its Id.
-9. Next we announce that we have changed our event. It will return true for the EconomyAPI.PurchaseProduct(userId, itemId) method; but it will not take our money or reissue the item.
 
 I'll leave the rest of the methods and event to self-study, enjoy coding.
 
